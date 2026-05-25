@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Inmobiliaria App</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { height:100%; background:#0a0a0a; color:#f5f0e8; font-family:'DM Sans',system-ui,sans-serif; overflow:hidden; }
+#root { height:100vh; }
+::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-track { background:transparent; } ::-webkit-scrollbar-thumb { background:rgba(201,168,76,0.3); border-radius:2px; }
+select option { background:#1a1a1a; color:#f5f0e8; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useRef, useEffect } = React;
+
+// ── SUPABASE ──────────────────────────────────────────────────
+const SUPA_URL = "https://psyvkahajunbmsgodvss.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBzeXZrYWhhanVuYm1zZ29kdnNzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NDA1ODUsImV4cCI6MjA5NTMxNjU4NX0.1JHEw5hplGP5G7uzryWC4pfrAayLpG67QN1u1TlfLPI";
+const supa = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// ── DB HELPERS ────────────────────────────────────────────────
+const DB = {
+  // CLIENTES
+  getClientes: async () => {
+    const { data, error } = await supa.from("clientes").select("*").order("created_at", { ascending: false });
+    if (error) { console.error(error); return []; }
+    return data;
+  },
+  addCliente: async (c) => {
+    const { data, error } = await supa.from("clientes").insert([c]).select();
+    if (error) { console.error(error); return null; }
+    return data[0];
+  },
+  updateCliente: async (id, changes) => {
+    const { error } = await supa.from("clientes").update(changes).eq("id", id);
+    if (error) console.error(error);
+  },
+  deleteCliente: async (id) => {
+    const { error } = await supa.from("clientes").delete().eq("id", id);
+    if (error) console.error(error);
+  },
+  // PROPIEDADES
+  getPropiedades: async () => {
+    const { data, error } = await supa.from("propiedades").select("*").order("created_at", { ascending: false });
+    if (error) { console.error(error); return []; }
+    return data;
+  },
+  addPropiedad: async (p) => {
+    const { data, error } = await supa.from("propiedades").insert([p]).select();
+    if (error) { console.error(error); return null; }
+    return data[0];
+  },
+  deletePropiedad: async (id) => {
+    const { error } = await supa.from("propiedades").delete().eq("id", id);
+    if (error) console.error(error);
+  },
+  // INTERACCIONES
+  addInteraccion: async (i) => {
+    const { data, error } = await supa.from("interacciones").insert([i]).select();
+    if (error) { console.error(error); return null; }
+    return data[0];
+  },
+  getInteracciones: async (clienteId) => {
+    const { data, error } = await supa.from("interacciones").select("*").eq("cliente_id", clienteId).order("created_at", { ascending: false });
+    if (error) { console.error(error); return []; }
+    return data;
+  },
+};
+
+// ── STORAGE LOCAL (solo para perfil WA) ──────────────────────
+const LS = {
+  get: (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+// ── CONSTANTES ───────────────────────────────────────────────
+const MODULES = [
+  { id:"dashboard", icon:"◈", label:"Dashboard" },
+  { id:"clientes",  icon:"◉", label:"Clientes" },
+  { id:"propiedades", icon:"⬡", label:"Propiedades" },
+  { id:"whatsapp",  icon:"💬", label:"WhatsApp" },
+  { id:"fotos",     icon:"◎", label:"Fotos IA" },
+  { id:"anuncios",  icon:"▤", label:"Anuncios" },
+  { id:"tokko",     icon:"⟳", label:"Tokko Import" },
+  { id:"sistema",   icon:"▣", label:"Mi Sistema" },
+];
+const STAGES = ["Nuevo Lead","Calificado","En Visita","Seguimiento","Cerrado"];
+const SCOLS   = ["#6366f1","#f59e0b","#3b82f6","#8b5cf6","#10b981"];
+
+// ── CLAUDE API ───────────────────────────────────────────────
+async function ai(system, user, img=null) {
+  const content = img
+    ? [{ type:"image", source:{ type:"base64", media_type:"image/jpeg", data:img } }, { type:"text", text:user }]
+    : user;
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST", headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, system, messages:[{ role:"user", content }] })
+  });
+  const d = await r.json();
+  return d.content?.map(b=>b.text||"").join("") || "Error.";
+}
+function toB64(file) {
+  return new Promise((res,rej) => { const r=new FileReader(); r.onload=()=>res(r.result.split(",")[1]); r.onerror=rej; r.readAsDataURL(file); });
+}
+
+// ── UI BASE ───────────────────────────────────────────────────
+const S = {
+  card: { background:"#141414", border:"1px solid #2a2a2a", borderRadius:14, padding:20 },
+  inp:  { background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:8, padding:"10px 14px", color:"#f5f0e8", fontSize:13, fontFamily:"inherit", outline:"none", width:"100%" },
+  sel:  { background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:8, padding:"10px 14px", color:"#f5f0e8", fontSize:13, fontFamily:"inherit", outline:"none", cursor:"pointer" },
+  gbtn: (dis) => ({ background: dis ? "#2a2a2a" : "linear-gradient(135deg,#C9A84C,#8B6914)", color: dis?"#555":"#000", border:"none", borderRadius:8, padding:"10px 22px", fontSize:13, fontWeight:700, cursor: dis?"not-allowed":"pointer", fontFamily:"inherit" }),
+  sbtn: { background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#aaa", borderRadius:8, padding:"7px 14px", fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+};
+
+function Badge({ color, children }) {
+  return <span style={{ background:color+"22", color, border:`1px solid ${color}44`, borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:600 }}>{children}</span>;
+}
+function Tag({ label }) {
+  return <p style={{ fontSize:11, letterSpacing:3, textTransform:"uppercase", color:"#C9A84C", marginBottom:12, fontWeight:500 }}>{label}</p>;
+}
+function Title({ children }) {
+  return <h2 style={{ fontFamily:"'Playfair Display',serif", fontSize:"clamp(22px,3.5vw,34px)", fontWeight:700, marginBottom:6, lineHeight:1.2 }}>{children}</h2>;
+}
+
+function ChatBox({ systemPrompt, placeholder="Escribí tu consulta...", welcome=null }) {
+  const [msgs, setMsgs] = useState(welcome ? [{ role:"assistant", text:welcome }] : []);
+  const [inp, setInp] = useState(""); const [loading, setLoading] = useState(false);
+  const bot = useRef();
+  async function send() {
+    if (!inp.trim()||loading) return;
+    const t = inp.trim(); setInp(""); setMsgs(m=>[...m,{role:"user",text:t}]); setLoading(true);
+    try { const r = await ai(systemPrompt, t); setMsgs(m=>[...m,{role:"assistant",text:r}]); }
+    catch { setMsgs(m=>[...m,{role:"assistant",text:"Error al conectar."}]); }
+    setLoading(false);
+    setTimeout(()=>bot.current?.scrollIntoView({behavior:"smooth"}),100);
+  }
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:"100%", minHeight:280 }}>
+      <div style={{ flex:1, overflowY:"auto", maxHeight:340, display:"flex", flexDirection:"column", gap:8, paddingBottom:8 }}>
+        {msgs.length===0 && <p style={{ color:"#555", fontSize:13, textAlign:"center", margin:"auto" }}>Asistente listo.</p>}
+        {msgs.map((m,i)=>(
+          <div key={i} style={{ display:"flex", justifyContent:m.role==="user"?"flex-end":"flex-start" }}>
+            <div style={{ maxWidth:"80%", padding:"10px 14px", borderRadius:m.role==="user"?"14px 14px 2px 14px":"14px 14px 14px 2px", background:m.role==="user"?"linear-gradient(135deg,#C9A84C,#8B6914)":"#1e1e1e", color:m.role==="user"?"#000":"#f5f0e8", fontSize:13, lineHeight:1.6, border:m.role==="assistant"?"1px solid #2a2a2a":"none", whiteSpace:"pre-wrap" }}>{m.text}</div>
+          </div>
+        ))}
+        {loading && <div style={{ display:"flex" }}><div style={{ padding:"10px 14px", borderRadius:"14px 14px 14px 2px", background:"#1e1e1e", border:"1px solid #2a2a2a", color:"#C9A84C", fontSize:13 }}>Pensando...</div></div>}
+        <div ref={bot}/>
+      </div>
+      <div style={{ display:"flex", gap:8, marginTop:10 }}>
+        <input value={inp} onChange={e=>setInp(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={placeholder} style={{ ...S.inp, flex:1 }}/>
+        <button onClick={send} disabled={loading||!inp.trim()} style={S.gbtn(loading||!inp.trim())}>→</button>
+      </div>
+    </div>
+  );
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────
+function Dashboard({ clientes, propiedades }) {
+  const cerrados = clientes.filter(c=>c.etapa==="Cerrado").length;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+      <div><Tag label="Resumen"/><Title>Tu Pipeline <span style={{ color:"#C9A84C" }}>Hoy</span></Title></div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+        {[
+          { label:"Clientes activos", val:clientes.length, color:"#6366f1" },
+          { label:"Propiedades", val:propiedades.length, color:"#3b82f6" },
+          { label:"Operaciones cerradas", val:cerrados, color:"#10b981" },
+          { label:"Comisiones est.", val:`$${(cerrados*720).toLocaleString()}`, color:"#C9A84C" },
+        ].map(s=>(
+          <div key={s.label} style={{ ...S.card, textAlign:"center" }}>
+            <div style={{ fontFamily:"'Playfair Display',serif", fontSize:28, fontWeight:700, color:s.color }}>{s.val}</div>
+            <div style={{ fontSize:11, color:"#666", marginTop:4 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={S.card}>
+        <p style={{ fontSize:11, color:"#C9A84C", letterSpacing:2, textTransform:"uppercase", marginBottom:12 }}>Pipeline por etapa</p>
+        <div style={{ display:"flex" }}>
+          {STAGES.map((e,i)=>(
+            <div key={e} style={{ flex:1, textAlign:"center", padding:"12px 6px", background:i%2===0?"#1a1a1a":"#161616", borderRight:i<4?"1px solid #2a2a2a":"none", borderRadius:i===0?"10px 0 0 10px":i===4?"0 10px 10px 0":0 }}>
+              <div style={{ fontSize:22, fontWeight:700, fontFamily:"'Playfair Display',serif", color:SCOLS[i] }}>{clientes.filter(c=>c.etapa===e).length}</div>
+              <div style={{ fontSize:10, color:"#666", marginTop:3, lineHeight:1.3 }}>{e}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={S.card}>
+        <p style={{ fontSize:11, color:"#C9A84C", letterSpacing:2, textTransform:"uppercase", marginBottom:12 }}>🔥 Contactar hoy</p>
+        {clientes.filter(c=>c.etapa==="En Visita"||c.etapa==="Seguimiento").length===0
+          ? <p style={{ color:"#555", fontSize:13 }}>No hay clientes urgentes.</p>
+          : clientes.filter(c=>c.etapa==="En Visita"||c.etapa==="Seguimiento").map(c=>(
+            <div key={c.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 0", borderBottom:"1px solid #1f1f1f" }}>
+              <div><span style={{ fontSize:14, fontWeight:600 }}>{c.nombre}</span><span style={{ fontSize:12, color:"#666", marginLeft:8 }}>{c.operacion}</span></div>
+              <Badge color={SCOLS[STAGES.indexOf(c.etapa)]}>{c.etapa}</Badge>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+// ── CLIENTES ──────────────────────────────────────────────────
+function Clientes({ clientes, agregarCliente, actualizarCliente, eliminarCliente }) {
+  const [sel, setSel] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ nombre:"", operacion:"Alquiler", presupuesto:"", urgencia:"Media", etapa:"Nuevo Lead", notas:"" });
+  const [tab, setTab] = useState("info");
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  const sysCliente = c => `Sos asistente inmobiliario experto. Cliente: ${c.nombre}, ${c.operacion}, ${c.presupuesto}, Urgencia: ${c.urgencia}, Etapa: ${c.etapa}. Notas: ${c.notas}. Ayudá al agente a buscar propiedades, negociar y fidelizar. Respondé en español.`;
+
+  function agregar() {
+    if (!form.nombre.trim()) return;
+    agregarCliente({ nombre:form.nombre, operacion:form.operacion, presupuesto:form.presupuesto, urgencia:form.urgencia, etapa:form.etapa, notas:form.notas, temperatura:"Sin calificar" });
+    setForm({ nombre:"", operacion:"Alquiler", presupuesto:"", urgencia:"Media", etapa:"Nuevo Lead", notas:"" });
+    setShowForm(false);
+  }
+  function moverEtapa(id, etapa) {
+    actualizarCliente(id, { etapa });
+    if (sel?.id===id) setSel(p=>({...p,etapa}));
+  }
+  function eliminar(id) {
+    eliminarCliente(id);
+    setSel(null);
+  }
+
+  const TABS = ["info","chat","negociar","seguimiento"];
+
+  if (sel) return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+        <button onClick={()=>setSel(null)} style={S.sbtn}>← Volver</button>
+        <h3 style={{ fontFamily:"'Playfair Display',serif", fontSize:18 }}>{sel.nombre}</h3>
+        <Badge color={SCOLS[STAGES.indexOf(sel.etapa)]}>{sel.etapa}</Badge>
+      </div>
+      <div style={{ display:"flex", gap:3, background:"#141414", padding:4, borderRadius:10, border:"1px solid #2a2a2a" }}>
+        {TABS.map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{ flex:1, padding:"8px 0", borderRadius:7, border:"none", cursor:"pointer", background:tab===t?"#C9A84C":"transparent", color:tab===t?"#000":"#888", fontSize:11, fontWeight:tab===t?700:400, fontFamily:"inherit", textTransform:"capitalize" }}>{t}</button>
+        ))}
+      </div>
+      {tab==="info" && (
+        <div style={S.card}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+            {[["Operación",sel.operacion],["Presupuesto",sel.presupuesto||"—"],["Urgencia",sel.urgencia],["Etapa",sel.etapa]].map(([l,v])=>(
+              <div key={l}><p style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:3 }}>{l}</p><p style={{ fontSize:14, fontWeight:600 }}>{v}</p></div>
+            ))}
+          </div>
+          {sel.notas && <p style={{ fontSize:13, color:"#aaa", lineHeight:1.6, marginBottom:14 }}>{sel.notas}</p>}
+          <p style={{ fontSize:11, color:"#C9A84C", marginBottom:8 }}>Mover en pipeline:</p>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+            {STAGES.map((e,i)=>(
+              <button key={e} onClick={()=>moverEtapa(sel.id,e)} style={{ padding:"5px 12px", borderRadius:20, border:`1px solid ${SCOLS[i]}44`, background:sel.etapa===e?SCOLS[i]+"33":"transparent", color:SCOLS[i], fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>{e}</button>
+            ))}
+          </div>
+          <button onClick={()=>eliminar(sel.id)} style={{ ...S.sbtn, color:"#e74c3c", borderColor:"#e74c3c33" }}>Eliminar cliente</button>
+        </div>
+      )}
+      {tab==="chat" && <div style={S.card}><ChatBox systemPrompt={sysCliente(sel)} placeholder="Consultá sobre este cliente..." welcome={`Listo para ayudarte con ${sel.nombre}. ¿Qué necesitás?`}/></div>}
+      {tab==="negociar" && <div style={S.card}><ChatBox systemPrompt={`Sos coach de negociación inmobiliaria. Cliente: ${sel.nombre}, ${sel.operacion}, ${sel.presupuesto}. Ayudá al agente a preparar la negociación, manejar objeciones y cerrar. Español, directo.`} placeholder="Describí la situación de negociación..." welcome={`Preparemos la negociación con ${sel.nombre}. Contame la situación.`}/></div>}
+      {tab==="seguimiento" && <div style={S.card}><ChatBox systemPrompt={`Sos experto en fidelización inmobiliaria. Cliente: ${sel.nombre}, etapa: ${sel.etapa}. Generá mensajes de WhatsApp y estrategias de seguimiento. Español.`} placeholder="¿Cuándo fue el último contacto?" welcome={`Contame el último contacto con ${sel.nombre} y te armo el mensaje perfecto.`}/></div>}
+    </div>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div><Tag label="CRM"/><Title>Mis <span style={{ color:"#C9A84C" }}>Clientes</span></Title></div>
+        <button onClick={()=>setShowForm(!showForm)} style={S.gbtn(false)}>+ Nuevo</button>
+      </div>
+      {showForm && (
+        <div style={S.card}>
+          <p style={{ fontSize:13, fontWeight:600, marginBottom:12, color:"#C9A84C" }}>Nuevo cliente</p>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+            <input value={form.nombre} onChange={e=>f("nombre",e.target.value)} placeholder="Nombre completo" style={S.inp}/>
+            <input value={form.presupuesto} onChange={e=>f("presupuesto",e.target.value)} placeholder="Presupuesto (USD 80.000)" style={S.inp}/>
+            <select value={form.operacion} onChange={e=>f("operacion",e.target.value)} style={S.sel}><option>Alquiler</option><option>Compra</option><option>Venta</option></select>
+            <select value={form.urgencia} onChange={e=>f("urgencia",e.target.value)} style={S.sel}><option value="Alta">Urgencia Alta</option><option value="Media">Urgencia Media</option><option value="Baja">Urgencia Baja</option></select>
+          </div>
+          <textarea value={form.notas} onChange={e=>f("notas",e.target.value)} placeholder="Qué busca, zona, características..." rows={3} style={{ ...S.inp, resize:"vertical", marginBottom:10 }}/>
+          <button onClick={agregar} style={S.gbtn(false)}>Guardar</button>
+        </div>
+      )}
+      {clientes.length===0
+        ? <div style={{ ...S.card, textAlign:"center", padding:40 }}><p style={{ color:"#555" }}>No hay clientes. Agregá el primero.</p></div>
+        : clientes.map(c=>(
+          <div key={c.id} onClick={()=>setSel(c)} style={{ ...S.card, cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", transition:"border-color 0.2s" }}
+            onMouseOver={e=>e.currentTarget.style.borderColor="#C9A84C44"} onMouseOut={e=>e.currentTarget.style.borderColor="#2a2a2a"}>
+            <div>
+              <p style={{ fontWeight:600, fontSize:15 }}>{c.nombre}</p>
+              <p style={{ fontSize:12, color:"#666", marginTop:2 }}>{c.operacion} · {c.presupuesto||"Sin presupuesto"} · Urgencia {c.urgencia}</p>
+            </div>
+            <Badge color={SCOLS[STAGES.indexOf(c.etapa)]}>{c.etapa}</Badge>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ── PROPIEDADES ───────────────────────────────────────────────
+function Propiedades({ propiedades, agregarPropiedad, eliminarPropiedad }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ direccion:"", tipo:"Departamento", ambientes:"", precio:"", zona:"", caracteristicas:"" });
+  const [busq, setBusq] = useState(""); const [res, setRes] = useState(""); const [loading, setLoading] = useState(false);
+  const f = (k,v) => setForm(p=>({...p,[k]:v}));
+
+  function agregar() {
+    if (!form.direccion.trim()) return;
+    agregarPropiedad({ ...form });
+    setForm({ direccion:"", tipo:"Departamento", ambientes:"", precio:"", zona:"", caracteristicas:"" });
+    setShowForm(false);
+  }
+  function eliminar(id) { eliminarPropiedad(id); }
+
+  async function buscarMatch() {
+    if (!busq.trim()||loading) return; setLoading(true);
+    const lista = propiedades.map(p=>`- ${p.tipo} en ${p.direccion} (${p.zona}), ${p.ambientes} amb., $${p.precio}. ${p.caracteristicas}`).join("\n");
+    const r = await ai("Sos asistente inmobiliario. Respondé en español, directo.", `Propiedades disponibles:\n${lista||"Ninguna."}\n\nBúsqueda del agente: ${busq}\n\nIndicá cuáles matchean y por qué.`);
+    setRes(r); setLoading(false);
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div><Tag label="Cartera"/><Title>Mis <span style={{ color:"#C9A84C" }}>Propiedades</span></Title></div>
+        <button onClick={()=>setShowForm(!showForm)} style={S.gbtn(false)}>+ Agregar</button>
+      </div>
+      <div style={{ ...S.card, borderColor:"#C9A84C33" }}>
+        <p style={{ fontSize:11, color:"#C9A84C", letterSpacing:1.5, textTransform:"uppercase", marginBottom:10 }}>🔍 Buscar match con IA</p>
+        <div style={{ display:"flex", gap:8 }}>
+          <input value={busq} onChange={e=>setBusq(e.target.value)} placeholder="Ej: 2 ambientes en Palermo hasta USD 600/mes..." style={{ ...S.inp, flex:1 }}/>
+          <button onClick={buscarMatch} disabled={loading} style={S.gbtn(loading)}>{loading?"...":"Buscar"}</button>
+        </div>
+        {res && <div style={{ marginTop:12, padding:"12px 14px", background:"#1a1a1a", borderRadius:8, fontSize:13, lineHeight:1.7, whiteSpace:"pre-wrap", border:"1px solid #2a2a2a" }}>{res}</div>}
+      </div>
+      {showForm && (
+        <div style={S.card}>
+          <p style={{ fontSize:13, fontWeight:600, marginBottom:12, color:"#C9A84C" }}>Nueva propiedad</p>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+            <input value={form.direccion} onChange={e=>f("direccion",e.target.value)} placeholder="Dirección" style={S.inp}/>
+            <input value={form.zona} onChange={e=>f("zona",e.target.value)} placeholder="Zona / Barrio" style={S.inp}/>
+            <select value={form.tipo} onChange={e=>f("tipo",e.target.value)} style={S.sel}><option>Departamento</option><option>Casa</option><option>PH</option><option>Local</option><option>Oficina</option></select>
+            <input value={form.ambientes} onChange={e=>f("ambientes",e.target.value)} placeholder="Ambientes" style={S.inp}/>
+            <input value={form.precio} onChange={e=>f("precio",e.target.value)} placeholder="Precio (USD o ARS)" style={{ ...S.inp, gridColumn:"span 2" }}/>
+          </div>
+          <textarea value={form.caracteristicas} onChange={e=>f("caracteristicas",e.target.value)} placeholder="Características: cochera, balcón, piscina..." rows={2} style={{ ...S.inp, resize:"vertical", marginBottom:10 }}/>
+          <button onClick={agregar} style={S.gbtn(false)}>Guardar</button>
+        </div>
+      )}
+      {propiedades.length===0
+        ? <div style={{ ...S.card, textAlign:"center", padding:40 }}><p style={{ color:"#555" }}>No hay propiedades.</p></div>
+        : propiedades.map(p=>(
+          <div key={p.id} style={S.card}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div>
+                <p style={{ fontWeight:600, fontSize:14 }}>{p.tipo} — {p.direccion}</p>
+                <p style={{ fontSize:12, color:"#888", marginTop:3 }}>{p.zona} · {p.ambientes} amb. · <span style={{ color:"#C9A84C" }}>${p.precio}</span></p>
+                {p.caracteristicas && <p style={{ fontSize:12, color:"#666", marginTop:3 }}>{p.caracteristicas}</p>}
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <Badge color="#3b82f6">{p.tipo}</Badge>
+                <button onClick={()=>eliminar(p.id)} style={{ ...S.sbtn, fontSize:11, color:"#e74c3c", borderColor:"#e74c3c33", padding:"4px 10px" }}>✕</button>
+              </div>
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+// ── FOTOS IA ──────────────────────────────────────────────────
+function FotosIA({ propiedades }) {
+  const [nombre, setNombre] = useState(""); const [fotos, setFotos] = useState([]);
+  const [procesadas, setProcesadas] = useState([]); const [loading, setLoading] = useState(false);
+  const [prog, setProg] = useState(0); const inputRef = useRef();
+
+  async function procesar() {
+    if (!fotos.length||loading) return;
+    setLoading(true); setProcesadas([]); setProg(0);
+    const res = [];
+    for (let i=0; i<fotos.length; i++) {
+      const b64 = await toB64(fotos[i]);
+      const r = await ai(
+        "Sos fotógrafo profesional inmobiliario. Analizás fotos y das instrucciones de edición en español.",
+        `Foto de "${nombre||"propiedad"}". Detectá: manchas del lente 0.5x (círculos difusos), exposición, balance de blancos, encuadre. Dá instrucciones concretas para edición en Lightroom. Puntuación actual y potencial.`,
+        b64
+      );
+      res.push({ nombre:fotos[i].name, src:URL.createObjectURL(fotos[i]), analisis:r });
+      setProg(Math.round(((i+1)/fotos.length)*100));
+      setProcesadas([...res]);
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div><Tag label="Editor IA"/><Title>Fotos <span style={{ color:"#C9A84C" }}>Profesionales</span></Title><p style={{ fontSize:13, color:"#666", marginTop:4 }}>Detecta manchas del lente 0.5x y da instrucciones de edición.</p></div>
+      <div style={S.card}>
+        <input value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Nombre de la propiedad..." style={{ ...S.inp, marginBottom:12 }}/>
+        <div onClick={()=>inputRef.current?.click()} style={{ border:"2px dashed #2a2a2a", borderRadius:12, padding:28, textAlign:"center", cursor:"pointer", background:"#0f0f0f" }}
+          onMouseOver={e=>e.currentTarget.style.borderColor="#C9A84C"} onMouseOut={e=>e.currentTarget.style.borderColor="#2a2a2a"}>
+          <div style={{ fontSize:28, marginBottom:6 }}>📷</div>
+          <p style={{ fontSize:13, color:"#888" }}>Tocá para seleccionar fotos</p>
+          <p style={{ fontSize:11, color:"#555", marginTop:3 }}>Hasta 40 fotos JPG/PNG</p>
+          <input ref={inputRef} type="file" multiple accept="image/*" style={{ display:"none" }} onChange={e=>setFotos(prev=>[...prev,...Array.from(e.target.files)])}/>
+        </div>
+      </div>
+      {fotos.length>0 && (
+        <div style={S.card}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <p style={{ fontSize:13, color:"#aaa" }}>{fotos.length} foto{fotos.length>1?"s":""} seleccionada{fotos.length>1?"s":""}</p>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={()=>{setFotos([]);setProcesadas([]);}} style={S.sbtn}>Limpiar</button>
+              <button onClick={procesar} disabled={loading} style={S.gbtn(loading)}>{loading?`Analizando ${prog}%...`:"Analizar con IA"}</button>
+            </div>
+          </div>
+          {loading && <div style={{ background:"#1a1a1a", borderRadius:8, height:6, overflow:"hidden", marginBottom:10 }}><div style={{ height:"100%", background:"linear-gradient(90deg,#C9A84C,#8B6914)", width:`${prog}%`, transition:"width 0.3s" }}/></div>}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(72px,1fr))", gap:6 }}>
+            {fotos.map((f,i)=><img key={i} src={URL.createObjectURL(f)} style={{ width:"100%", aspectRatio:"1", objectFit:"cover", borderRadius:7, border:procesadas[i]?"2px solid #C9A84C":"2px solid #2a2a2a" }}/>)}
+          </div>
+        </div>
+      )}
+      {procesadas.length>0 && (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {procesadas.map((p,i)=>(
+            <div key={i} style={{ ...S.card, display:"flex", gap:14 }}>
+              <img src={p.src} style={{ width:90, height:72, objectFit:"cover", borderRadius:8, flexShrink:0 }}/>
+              <div style={{ flex:1 }}><p style={{ fontSize:11, color:"#888", marginBottom:5 }}>{p.nombre}</p><p style={{ fontSize:12, color:"#ddd", lineHeight:1.6, whiteSpace:"pre-wrap" }}>{p.analisis}</p></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ANUNCIOS ──────────────────────────────────────────────────
+function Anuncios({ propiedades }) {
+  const [propId, setPropId] = useState(""); const [plat, setPlat] = useState("zonaprop");
+  const [extras, setExtras] = useState(""); const [res, setRes] = useState(""); const [loading, setLoading] = useState(false);
+
+  async function generar() {
+    if (loading) return; setLoading(true);
+    const prop = propiedades.find(p=>String(p.id)===String(propId));
+    const desc = prop ? `${prop.tipo} en ${prop.direccion}, zona ${prop.zona}, ${prop.ambientes} ambientes, $${prop.precio}. ${prop.caracteristicas}` : extras;
+    const plats = {
+      zonaprop:"Zonaprop/Argenprop: título + descripción 150-200 palabras, profesional y vendedor.",
+      instagram:"Instagram: 3-4 líneas con emojis estratégicos y hashtags inmobiliarios argentinos.",
+      whatsapp:"WhatsApp: 3-5 líneas directas, como si lo escribiera una persona, natural y concreto.",
+    };
+    const r = await ai("Sos experto en marketing inmobiliario argentino. Generás anuncios que venden. Respondé SOLO con el anuncio.", `Plataforma: ${plats[plat]}\nPropiedad: ${desc}\nExtras: ${extras}`);
+    setRes(r); setLoading(false);
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div><Tag label="Generador"/><Title>Anuncios <span style={{ color:"#C9A84C" }}>con IA</span></Title></div>
+      <div style={S.card}>
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {propiedades.length>0 && (
+            <div>
+              <p style={{ fontSize:11, color:"#666", marginBottom:6 }}>Propiedad</p>
+              <select value={propId} onChange={e=>setPropId(e.target.value)} style={{ ...S.sel, width:"100%" }}>
+                <option value="">Seleccioná...</option>
+                {propiedades.map(p=><option key={p.id} value={p.id}>{p.tipo} — {p.direccion}</option>)}
+              </select>
+            </div>
+          )}
+          <div>
+            <p style={{ fontSize:11, color:"#666", marginBottom:6 }}>Plataforma</p>
+            <select value={plat} onChange={e=>setPlat(e.target.value)} style={{ ...S.sel, width:"100%" }}>
+              <option value="zonaprop">Zonaprop / Argenprop</option>
+              <option value="instagram">Instagram</option>
+              <option value="whatsapp">WhatsApp</option>
+            </select>
+          </div>
+          <div>
+            <p style={{ fontSize:11, color:"#666", marginBottom:6 }}>Detalles adicionales</p>
+            <textarea value={extras} onChange={e=>setExtras(e.target.value)} placeholder="Características especiales, puntos de venta únicos..." rows={3} style={{ ...S.inp, resize:"vertical" }}/>
+          </div>
+          <button onClick={generar} disabled={loading||(!propId&&!extras.trim())} style={S.gbtn(loading||(!propId&&!extras.trim()))}>{loading?"Generando...":"Generar anuncio"}</button>
+        </div>
+      </div>
+      {res && (
+        <div style={{ ...S.card, borderColor:"#C9A84C33" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <p style={{ fontSize:11, color:"#C9A84C", textTransform:"uppercase", letterSpacing:1 }}>Anuncio generado</p>
+            <button onClick={()=>navigator.clipboard.writeText(res)} style={S.sbtn}>Copiar</button>
+          </div>
+          <p style={{ fontSize:13, lineHeight:1.8, whiteSpace:"pre-wrap" }}>{res}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── TOKKO IMPORT ──────────────────────────────────────────────
+function TokkoImport({ agregarCliente }) {
+  const [paso, setPaso] = useState("intro");
+  const [csv, setCsv] = useState(""); const [contactos, setContactos] = useState([]);
+  const [analisis, setAnalisis] = useState([]); const [loading, setLoading] = useState(false);
+  const [prog, setProg] = useState(0); const inputRef = useRef();
+
+  function parsear(txt) {
+    const l = txt.trim().split("\n").filter(x=>x.trim());
+    if (l.length<2) return [];
+    const h = l[0].split(",").map(x=>x.trim().replace(/"/g,"").toLowerCase());
+    return l.slice(1).map(line=>{ const v=line.split(",").map(x=>x.trim().replace(/"/g,"")); const o={}; h.forEach((k,i)=>o[k]=v[i]||""); return o; }).filter(c=>c.nombre||c.name||c.contacto||c.cliente);
+  }
+  function campo(obj, terms) { for(const t of terms){ const k=Object.keys(obj).find(x=>x.toLowerCase().includes(t)); if(k&&obj[k]) return obj[k]; } return ""; }
+  function norm(r) { return { nombre:campo(r,["nombre","name","contacto","cliente"])||"Sin nombre", email:campo(r,["email","mail"]), telefono:campo(r,["telefono","phone","cel"]), operacion:campo(r,["operacion","tipo","operation"])||"Sin datos", presupuesto:campo(r,["presupuesto","budget","precio"]), origen:campo(r,["origen","fuente","source"])||"Tokko", fecha:campo(r,["fecha","date","created"]), estado:campo(r,["estado","status","etapa"]), notas:campo(r,["nota","comment","observacion","mensaje"]) }; }
+
+  async function analizar(list) {
+    setLoading(true); setAnalisis([]); setProg(0);
+    const res = [];
+    for (let i=0; i<list.length; i++) {
+      const c = list[i];
+      try {
+        const r = await ai(
+          "Sos experto en CRM inmobiliario. Respondé SOLO en JSON válido, sin texto extra ni backticks.",
+          `Analizá este contacto. Respondé SOLO este JSON: {"temperatura":"CALIENTE","etapa":"Nuevo Lead","atencion":"MAL ATENDIDO","accion":"acción concreta","mensaje":"mensaje WhatsApp humanizado"}\nDatos: Nombre:${c.nombre}, Op:${c.operacion}, Pres:${c.presupuesto}, Fecha:${c.fecha}, Estado:${c.estado}, Notas:${c.notas}`
+        );
+        let p; try { p=JSON.parse(r.replace(/```json|```/g,"").trim()); } catch { p={temperatura:"FRÍO",etapa:"Nuevo Lead",atencion:"SIN DATOS",accion:"Revisar",mensaje:""}; }
+        res.push({...c,...p,id:Date.now()+i});
+      } catch { res.push({...c,temperatura:"FRÍO",etapa:"Nuevo Lead",atencion:"SIN DATOS",accion:"Revisar",mensaje:"",id:Date.now()+i}); }
+      setProg(Math.round(((i+1)/list.length)*100));
+      setAnalisis([...res]);
+    }
+    setLoading(false); setPaso("resultado");
+  }
+
+  function procesar() {
+    const c = parsear(csv).map(norm);
+    if (!c.length) { alert("No se encontraron contactos. Revisá el formato."); return; }
+    setContactos(c); setPaso("analizando"); analizar(c);
+  }
+
+  function importar() {
+    analisis.forEach(c => {
+      agregarCliente({ nombre:c.nombre, operacion:c.operacion||"Sin datos", presupuesto:c.presupuesto||"", urgencia:c.temperatura==="CALIENTE"?"Alta":c.temperatura==="TIBIO"?"Media":"Baja", etapa:c.etapa||"Nuevo Lead", temperatura:c.temperatura||"FRÍO", notas:`Tokko Import. ${c.accion||""}`.trim() });
+    });
+    setPaso("done");
+  }
+
+  const TC = {CALIENTE:"#e74c3c",TIBIO:"#f39c12","FRÍO":"#3b82f6"};
+  const AC = {"BIEN ATENDIDO":"#10b981","MAL ATENDIDO":"#e74c3c","SIN DATOS":"#666"};
+
+  if (paso==="intro") return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div><Tag label="Sincronización"/><Title>Importar desde <span style={{ color:"#C9A84C" }}>Tokko</span></Title><p style={{ fontSize:13, color:"#666", marginTop:4, lineHeight:1.6 }}>Exportá tus contactos, importalos acá y la IA los clasifica automáticamente.</p></div>
+      <div style={S.card}>
+        <p style={{ fontSize:13, fontWeight:600, color:"#C9A84C", marginBottom:12 }}>Cómo exportar de Tokko</p>
+        {["Entrá a tokkobroker.com e iniciá sesión","Andá a CRM → Contactos","Buscá el botón Exportar o Descargar CSV","Seleccioná el rango de fechas (últimos 6-12 meses)","Descargá el .csv y cargalo abajo"].map((s,i)=>(
+          <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start", padding:"7px 0", borderBottom:"1px solid #1e1e1e" }}>
+            <span style={{ background:"#C9A84C", color:"#000", borderRadius:"50%", width:20, height:20, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, flexShrink:0, marginTop:1 }}>{i+1}</span>
+            <p style={{ fontSize:13, color:"#aaa" }}>{s}</p>
+          </div>
+        ))}
+      </div>
+      <div style={S.card}>
+        <div onClick={()=>inputRef.current?.click()} style={{ border:"2px dashed #2a2a2a", borderRadius:10, padding:24, textAlign:"center", cursor:"pointer", marginBottom:10 }}
+          onMouseOver={e=>e.currentTarget.style.borderColor="#C9A84C"} onMouseOut={e=>e.currentTarget.style.borderColor="#2a2a2a"}>
+          <div style={{ fontSize:24, marginBottom:6 }}>📋</div>
+          <p style={{ fontSize:13, color:"#888" }}>Subir CSV de Tokko</p>
+          <input ref={inputRef} type="file" accept=".csv,.txt" style={{ display:"none" }} onChange={e=>{ const r=new FileReader(); r.onload=ev=>setCsv(ev.target.result); r.readAsText(e.target.files[0],"UTF-8"); }}/>
+        </div>
+        <p style={{ fontSize:12, color:"#555", textAlign:"center", marginBottom:8 }}>— o pegá el CSV directo —</p>
+        <textarea value={csv} onChange={e=>setCsv(e.target.value)} placeholder={"nombre,email,operacion,presupuesto\nJuan Pérez,juan@mail.com,Alquiler,USD 600"} rows={4} style={{ ...S.inp, fontFamily:"monospace", fontSize:12, resize:"vertical", marginBottom:10 }}/>
+        <button onClick={procesar} disabled={!csv.trim()} style={S.gbtn(!csv.trim())}>Analizar con IA →</button>
+      </div>
+    </div>
+  );
+
+  if (paso==="analizando") return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20, minHeight:400, textAlign:"center" }}>
+      <Tag label="Procesando"/>
+      <Title>Analizando <span style={{ color:"#C9A84C" }}>{contactos.length} contactos</span></Title>
+      <div style={{ width:"100%", maxWidth:460 }}>
+        <div style={{ background:"#1a1a1a", borderRadius:8, height:8, overflow:"hidden", marginBottom:8 }}><div style={{ height:"100%", background:"linear-gradient(90deg,#C9A84C,#8B6914)", width:`${prog}%`, transition:"width 0.4s" }}/></div>
+        <p style={{ fontSize:13, color:"#888" }}>{prog}% — {analisis.length} de {contactos.length}</p>
+      </div>
+      {analisis.slice(-3).map((c,i)=>(
+        <div key={i} style={{ ...S.card, width:"100%", maxWidth:500, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <p style={{ fontWeight:600 }}>{c.nombre}</p>
+          <div style={{ display:"flex", gap:6 }}><Badge color={TC[c.temperatura]||"#666"}>{c.temperatura}</Badge><Badge color={AC[c.atencion]||"#666"}>{c.atencion}</Badge></div>
+        </div>
+      ))}
+    </div>
+  );
+
+  if (paso==="done") return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16, minHeight:400, textAlign:"center" }}>
+      <div style={{ fontSize:48 }}>✅</div>
+      <Title><span style={{ color:"#C9A84C" }}>{analisis.length} contactos</span> importados</Title>
+      <p style={{ fontSize:14, color:"#888", maxWidth:380, lineHeight:1.6 }}>Ya están en tu CRM con temperatura, etapa y notas asignadas.</p>
+      <div style={{ display:"flex", gap:10 }}>
+        <button onClick={()=>{setPaso("intro");setCsv("");setAnalisis([]);}} style={S.gbtn(false)}>Importar más</button>
+        <button onClick={()=>setPaso("resultado")} style={S.sbtn}>Ver análisis</button>
+      </div>
+    </div>
+  );
+
+  const mal = analisis.filter(c=>c.atencion==="MAL ATENDIDO");
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+        <div><Tag label="Análisis completado"/><Title>{analisis.length} contactos <span style={{ color:"#C9A84C" }}>analizados</span></Title></div>
+        <button onClick={importar} style={S.gbtn(false)}>Importar al CRM →</button>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+        {[["Calientes 🔥",analisis.filter(c=>c.temperatura==="CALIENTE").length,"#e74c3c"],["Tibios 🌡",analisis.filter(c=>c.temperatura==="TIBIO").length,"#f39c12"],["Fríos ❄️",analisis.filter(c=>c.temperatura==="FRÍO").length,"#3b82f6"],["Mal atendidos ⚠️",mal.length,"#e74c3c"]].map(([l,v,col])=>(
+          <div key={l} style={{ ...S.card, textAlign:"center" }}><div style={{ fontFamily:"'Playfair Display',serif", fontSize:26, fontWeight:700, color:col }}>{v}</div><div style={{ fontSize:11, color:"#666", marginTop:3 }}>{l}</div></div>
+        ))}
+      </div>
+      {mal.length>0 && (
+        <div style={{ ...S.card, borderColor:"#e74c3c33", borderTop:"2px solid #e74c3c" }}>
+          <p style={{ fontSize:11, color:"#e74c3c", letterSpacing:1.5, textTransform:"uppercase", marginBottom:12 }}>⚠️ Mal atendidos — contactar primero</p>
+          {mal.map(c=>(
+            <div key={c.id} style={{ background:"#1a1a1a", borderRadius:10, padding:"12px 14px", marginBottom:8 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                <div><p style={{ fontWeight:600 }}>{c.nombre}</p><p style={{ fontSize:12, color:"#888" }}>{c.operacion}</p></div>
+                <Badge color={TC[c.temperatura]||"#666"}>{c.temperatura}</Badge>
+              </div>
+              {c.accion && <p style={{ fontSize:12, color:"#C9A84C", marginBottom:6 }}>→ {c.accion}</p>}
+              {c.mensaje && <div style={{ background:"#111", borderRadius:8, padding:"9px 12px", borderLeft:"2px solid #25D366", marginBottom:4 }}>
+                <p style={{ fontSize:12, color:"#ddd", fontStyle:"italic", lineHeight:1.6 }}>{c.mensaje}</p>
+                <button onClick={()=>navigator.clipboard.writeText(c.mensaje)} style={{ ...S.sbtn, marginTop:5, fontSize:10, padding:"3px 9px" }}>Copiar</button>
+              </div>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={S.card}>
+        <p style={{ fontSize:11, color:"#C9A84C", letterSpacing:1.5, textTransform:"uppercase", marginBottom:12 }}>Todos</p>
+        {analisis.map(c=>(
+          <div key={c.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #1e1e1e" }}>
+            <div><p style={{ fontWeight:600, fontSize:14 }}>{c.nombre}</p><p style={{ fontSize:12, color:"#888" }}>{c.accion}</p></div>
+            <div style={{ display:"flex", gap:5 }}><Badge color={TC[c.temperatura]||"#666"}>{c.temperatura}</Badge><Badge color={AC[c.atencion]||"#666"}>{c.atencion}</Badge></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── WHATSAPP ──────────────────────────────────────────────────
+const WA_SCRIPTS = [
+  {
+    categoria: "🟢 Primer contacto",
+    scripts: [
+      { t:"Lead nuevo — general", m:"Hola [nombre], soy [tu nombre] de [inmobiliaria]. Vi que consultaste por la propiedad en [dirección]. ¿Seguís buscando? Tengo disponibilidad para mostrártela esta semana.", n:"Directo, sin exceso de entusiasmo." },
+      { t:"Lead nuevo — alquiler", m:"Hola [nombre], soy [tu nombre]. Vi tu consulta por el alquiler en [dirección]. ¿Para cuándo estás buscando? Así te cuento la disponibilidad.", n:"Detecta urgencia desde el primer mensaje." },
+      { t:"Lead nuevo — compra", m:"Hola [nombre], soy [tu nombre]. Vi que consultaste por la propiedad en [dirección]. ¿Estás en etapa de búsqueda activa o todavía explorando opciones?", n:"Califica sin presionar." },
+    ]
+  },
+  {
+    categoria: "🟡 Calificación",
+    scripts: [
+      { t:"3 preguntas clave", m:"Antes de coordinar, te hago 3 preguntas rápidas para no hacerte perder el tiempo: ¿Para cuándo necesitás mudarte? ¿Tenés el dinero listo o estás viendo financiación? ¿Ya visitaste otras propiedades similares?", n:"Filtra no-calificados antes de invertir tiempo." },
+      { t:"Confirmar visita", m:"Hola [nombre], quedamos para el [día] a las [hora] en [dirección]. Te mando la ubicación por acá. Cualquier cosa me avisás.", n:"Corto y claro. No des lugar a cancelaciones." },
+    ]
+  },
+  {
+    categoria: "🔵 Post-visita",
+    scripts: [
+      { t:"Follow-up 24hs", m:"Hola [nombre], ¿pudiste pensarlo? Si la propiedad no terminó de convencerte, contame qué le cambiarías — así te busco algo que sí cierre.", n:"No preguntás si avanzan. Les das una salida que igual te da info." },
+      { t:"Alternativas listas", m:"Hola [nombre], estuve buscando opciones que se ajusten mejor a lo que me dijiste. Encontré [X] que creo que te pueden interesar. ¿Tenés 10 minutos esta semana para verlas?", n:"Mostrás trabajo hecho. Genera compromiso." },
+      { t:"Cerrar en el momento", m:"[nombre], se me olvidó preguntarte: si resolvemos [el detalle que mencionó], ¿estarías listo para avanzar con la reserva esta semana?", n:"Cierre directo post-visita mientras el interés está caliente." },
+    ]
+  },
+  {
+    categoria: "❄️ Reactivar fríos",
+    scripts: [
+      { t:"Cliente fantasma", m:"Hola [nombre], hace un tiempo que no hablamos. Encontré algo que creo que se ajusta mejor a lo que me dijiste. ¿Tenés 2 minutos para que te cuente?", n:"No preguntás si siguen buscando. Ofrecés algo concreto." },
+      { t:"Reactivar sin presionar", m:"Hola [nombre], ¿cómo estás? Sigo atento a lo que necesitás. Si en algún momento querés retomar la búsqueda, avisame y arrancamos.", n:"Sin presión. Mantiene la puerta abierta." },
+      { t:"Nueva propiedad disponible", m:"Hola [nombre], recién entró una propiedad que creo que te puede interesar — es muy parecida a lo que estabas buscando. ¿Te la mando?", n:"Razón concreta para volver a hablar." },
+    ]
+  },
+  {
+    categoria: "⚡ Urgencia y cierre",
+    scripts: [
+      { t:"Urgencia real", m:"[nombre], te quiero avisar que hoy vino otra persona a verla y quedó en responderme mañana. Si te interesa asegurarla, la reserva con [monto] te la guarda. ¿Qué decís?", n:"Solo usalo si es verdad. La credibilidad es todo." },
+      { t:"Última oportunidad", m:"[nombre], el dueño me confirmó que si no hay reserva esta semana, vuelve a publicarla con otro precio. Sería una lástima perderla por eso. ¿Podemos hablar hoy?", n:"Con propiedades que vienen bajando de precio." },
+      { t:"Confirmar reserva", m:"[nombre], para confirmar la reserva necesito: DNI, [dato], y el [monto] de seña. ¿Cómo te queda mejor coordinar esto — hoy o mañana?", n:"Asumís que ya dijeron que sí. Preguntás cuándo, no si." },
+    ]
+  },
+  {
+    categoria: "🤝 Fidelización",
+    scripts: [
+      { t:"Pedir referidos", m:"[nombre], me alegra mucho que hayamos podido cerrar. Si conocés alguien que esté buscando algo parecido, me encantaría ayudarlo. Cualquier cosa me avisás.", n:"Natural, sin presión. Después de cada cierre." },
+      { t:"Seguimiento post-cierre", m:"Hola [nombre], ¿cómo te fue en la mudanza? Espero que todo haya salido bien. Cualquier cosa que necesites, acá estoy.", n:"Construye relación para futuros negocios y referidos." },
+    ]
+  },
+];
+
+function WhatsApp({ clientes }) {
+  const [categoria, setCategoria] = useState(0);
+  const [nombre, setNombre] = useState("");
+  const [agente, setAgente] = useState(() => LS.get("wa_agente",""));
+  const [inmob, setInmob] = useState(() => LS.get("wa_inmob",""));
+  const [copiado, setCopiado] = useState(null);
+
+  function guardarPerfil() { LS.set("wa_agente",agente); LS.set("wa_inmob",inmob); }
+
+  function personalizar(msg) {
+    return msg
+      .replace(/\[nombre\]/gi, nombre || "[nombre]")
+      .replace(/\[tu nombre\]/gi, agente || "[tu nombre]")
+      .replace(/\[inmobiliaria\]/gi, inmob || "[inmobiliaria]");
+  }
+
+  function copiar(msg) {
+    const txt = personalizar(msg);
+    navigator.clipboard.writeText(txt);
+    setCopiado(msg);
+    setTimeout(() => setCopiado(null), 2000);
+  }
+
+  const cat = WA_SCRIPTS[categoria];
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div><Tag label="Mensajes listos"/><Title>Scripts de <span style={{ color:"#C9A84C" }}>WhatsApp</span></Title><p style={{ fontSize:13, color:"#666", marginTop:4 }}>Tocá copiar y pegá directo en WhatsApp. Personalizá el nombre arriba.</p></div>
+
+      {/* Perfil del agente */}
+      <div style={S.card}>
+        <p style={{ fontSize:11, color:"#C9A84C", letterSpacing:1.5, textTransform:"uppercase", marginBottom:10 }}>Tu perfil (se inserta automático)</p>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+          <input value={agente} onChange={e=>setAgente(e.target.value)} placeholder="Tu nombre" style={S.inp}/>
+          <input value={inmob} onChange={e=>setInmob(e.target.value)} placeholder="Nombre inmobiliaria" style={S.inp}/>
+        </div>
+        <button onClick={guardarPerfil} style={{ ...S.sbtn, fontSize:12 }}>Guardar perfil</button>
+      </div>
+
+      {/* Nombre del cliente */}
+      <div style={S.card}>
+        <p style={{ fontSize:11, color:"#C9A84C", letterSpacing:1.5, textTransform:"uppercase", marginBottom:8 }}>¿A quién le vas a escribir?</p>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <input value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Nombre del cliente (opcional)" style={{ ...S.inp, flex:1 }}/>
+          {clientes.length > 0 && (
+            <select onChange={e=>setNombre(e.target.value)} style={{ ...S.sel, flex:1 }}>
+              <option value="">O elegí del CRM</option>
+              {clientes.map(c=><option key={c.id} value={c.nombre.split(" ")[0]}>{c.nombre}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs de categorías */}
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+        {WA_SCRIPTS.map((c,i)=>(
+          <button key={i} onClick={()=>setCategoria(i)} style={{ padding:"7px 12px", borderRadius:20, border:`1px solid ${categoria===i?"#C9A84C44":"#2a2a2a"}`, background:categoria===i?"rgba(201,168,76,0.15)":"transparent", color:categoria===i?"#C9A84C":"#666", fontSize:12, cursor:"pointer", fontFamily:"inherit", fontWeight:categoria===i?600:400 }}>{c.categoria}</button>
+        ))}
+      </div>
+
+      {/* Scripts de la categoría seleccionada */}
+      <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+        {cat.scripts.map((s,i)=>(
+          <div key={i} style={S.card}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <p style={{ fontSize:12, fontWeight:600, color:"#C9A84C" }}>{s.t}</p>
+              <button
+                onClick={()=>copiar(s.m)}
+                style={{ ...S.sbtn, fontSize:11, padding:"5px 14px", background:copiado===s.m?"#10b981":"#1a1a1a", color:copiado===s.m?"#fff":"#aaa", borderColor:copiado===s.m?"#10b981":"#2a2a2a", transition:"all 0.2s" }}
+              >{copiado===s.m?"✓ Copiado":"Copiar"}</button>
+            </div>
+            <div style={{ background:"#111", borderRadius:8, padding:"11px 14px", borderLeft:"3px solid #25D366", marginBottom:7 }}>
+              <p style={{ fontSize:13, color:"#ddd", lineHeight:1.7 }}>{personalizar(s.m)}</p>
+            </div>
+            <p style={{ fontSize:11, color:"#555", fontStyle:"italic" }}>💡 {s.n}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── MI SISTEMA ────────────────────────────────────────────────
+function MiSistema() {
+  const [tab, setTab] = useState("rutina");
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div><Tag label="Referencia"/><Title>Mi <span style={{ color:"#C9A84C" }}>Sistema</span></Title></div>
+      <div style={{ display:"flex", gap:3, background:"#141414", padding:4, borderRadius:10, border:"1px solid #2a2a2a" }}>
+        {["rutina","cierres","scripts","coach"].map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{ flex:1, padding:"8px 0", borderRadius:7, border:"none", cursor:"pointer", background:tab===t?"#C9A84C":"transparent", color:tab===t?"#000":"#888", fontSize:11, fontWeight:tab===t?700:400, fontFamily:"inherit", textTransform:"capitalize" }}>{t}</button>
+        ))}
+      </div>
+      {tab==="rutina" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {[
+            { time:"8:00–9:00", title:"Arranque", items:["Revisá el pipeline","3 clientes más calientes","Preparás mensajes","SIN redes sociales"], col:"#6366f1" },
+            { time:"9:00–11:00", title:"Contacto", items:["Respondé mensajes","Seguimientos pendientes","Coordiná visitas"], col:"#3b82f6" },
+            { time:"11:00–13:00", title:"Búsqueda propiedades", items:["Solo calificados","Máximo 3 opciones","Mandás con contexto"], col:"#f59e0b" },
+            { time:"13:00–15:00", title:"Descanso real", items:["Almuerzo sin trabajo","Acá podés jugar","Recarga sin culpa"], col:"#10b981" },
+            { time:"15:00–19:00", title:"Visitas y cierres", items:["Protocolo activo","Técnicas de cierre","Follow-up post-visita"], col:"#C9A84C" },
+          ].map(b=>(
+            <div key={b.time} style={{ ...S.card, display:"flex", gap:12, borderLeft:`3px solid ${b.col}` }}>
+              <div style={{ flexShrink:0 }}><Badge color={b.col}>{b.time}</Badge></div>
+              <div><p style={{ fontWeight:600, fontSize:13, marginBottom:5 }}>{b.title}</p>{b.items.map(i=><p key={i} style={{ fontSize:12, color:"#888", padding:"1px 0" }}>▸ {i}</p>)}</div>
+            </div>
+          ))}
+          <div style={{ background:"#1a0a0a", border:"1px solid #e74c3c33", borderRadius:10, padding:"12px 16px" }}>
+            <p style={{ fontSize:13, color:"#e74c3c" }}>🚫 <strong>Antes de las 13:00:</strong> Counter Strike, Instagram, TikTok, YouTube.</p>
+          </div>
+        </div>
+      )}
+      {tab==="cierres" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {[
+            { t:"⏰ Urgencia Real", d:"Cuando hay competencia real.", s:'"Te digo una cosa: ayer vinieron a verla y quedaron en responder hoy. ¿Avanzamos?"' },
+            { t:"🔢 Decisión Menor", d:"Asumís que ya decidieron.", s:'"¿Preferís hacer la reserva hoy a la tarde o mañana a la mañana?"' },
+            { t:"💰 Costo de Espera", d:"Con indecisos que llevan semanas.", s:'"Cada semana sin cerrar es plata que se va. ¿Cuánto más vale el riesgo?"' },
+            { t:"🤝 Resumen de Acuerdo", d:"Después de negociar.", s:'"Entonces quedamos en [precio] y [condiciones]. ¿Arrancamos con la reserva?"' },
+          ].map(c=>(
+            <div key={c.t} style={{ ...S.card, borderTop:"2px solid #C9A84C44" }}>
+              <p style={{ fontWeight:700, fontSize:14, color:"#C9A84C", marginBottom:4 }}>{c.t}</p>
+              <p style={{ fontSize:12, color:"#777", marginBottom:8 }}>{c.d}</p>
+              <p style={{ fontSize:12, color:"#ddd", fontStyle:"italic", background:"#1a1a1a", padding:"9px 12px", borderRadius:8, borderLeft:"2px solid #C9A84C", lineHeight:1.6 }}>{c.s}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {tab==="scripts" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {[
+            { t:"Primer contacto", m:"Hola [nombre], soy [tu nombre] de [inmobiliaria]. Vi que consultaste por [dirección]. ¿Seguís buscando? Tengo disponibilidad para mostrártela esta semana.", n:"Directo, sin exceso de entusiasmo." },
+            { t:"Calificación rápida", m:"Antes de coordinar, 3 preguntas rápidas: ¿Para cuándo necesitás mudarte? ¿Tenés el dinero listo o estás viendo financiación? ¿Ya visitaste otras propiedades?", n:"Filtra no-calificados antes de invertir tiempo." },
+            { t:"Follow-up post-visita", m:"Hola [nombre], ¿pudiste pensarlo? Si no terminó de convencerte, contame qué le cambiarías — así te busco algo que sí cierre.", n:"No preguntás si avanzan. Les das info útil." },
+            { t:"Reactivar fantasma", m:"Hola [nombre], hace un tiempo que no hablamos. Encontré algo que creo que se ajusta mejor a lo que me dijiste. ¿Tenés 2 minutos?", n:"Ofrecés algo concreto. Genera curiosidad." },
+          ].map(s=>(
+            <div key={s.t} style={S.card}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+                <p style={{ fontSize:11, fontWeight:600, color:"#C9A84C", textTransform:"uppercase", letterSpacing:1 }}>{s.t}</p>
+                <button onClick={()=>navigator.clipboard.writeText(s.m)} style={{ ...S.sbtn, fontSize:10, padding:"3px 9px" }}>Copiar</button>
+              </div>
+              <p style={{ fontSize:13, color:"#ddd", lineHeight:1.7, background:"#111", padding:"10px 13px", borderRadius:8, borderLeft:"2px solid #25D366", marginBottom:5 }}>{s.m}</p>
+              <p style={{ fontSize:11, color:"#555", fontStyle:"italic" }}>{s.n}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {tab==="coach" && (
+        <div style={S.card}>
+          <p style={{ fontSize:12, color:"#C9A84C", marginBottom:12 }}>Coach personal de ventas</p>
+          <ChatBox
+            systemPrompt="Sos un coach experto en ventas inmobiliarias y mentalidad empresarial. Ayudás al agente a mejorar técnicas, desarrollar mentalidad de alto rendimiento y llegar a $5.000 USD/mes. Respondé en español, directo y motivador."
+            placeholder="Contame qué situación tenés o qué querés mejorar..."
+            welcome="Soy tu coach. ¿Qué está pasando hoy? ¿Algún cliente difícil, algo que querés cerrar o una situación que no sabés cómo manejar?"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── APP PRINCIPAL ─────────────────────────────────────────────
+function App() {
+  const [mod, setMod] = useState("dashboard");
+  const [sideOpen, setSideOpen] = useState(false);
+  const [clientes, setClientes] = useState([]);
+  const [props, setProps] = useState([]);
+  const [dbReady, setDbReady] = useState(false);
+
+  // Cargar datos desde Supabase al iniciar
+  useEffect(() => {
+    async function cargar() {
+      const [c, p] = await Promise.all([DB.getClientes(), DB.getPropiedades()]);
+      setClientes(c); setProps(p); setDbReady(true);
+    }
+    cargar();
+  }, []);
+
+  // Wrappers que sincronizan con Supabase
+  async function agregarCliente(c) {
+    const nuevo = await DB.addCliente(c);
+    if (nuevo) setClientes(prev => [nuevo, ...prev]);
+  }
+  async function actualizarCliente(id, changes) {
+    await DB.updateCliente(id, changes);
+    setClientes(prev => prev.map(c => c.id === id ? { ...c, ...changes } : c));
+  }
+  async function eliminarCliente(id) {
+    await DB.deleteCliente(id);
+    setClientes(prev => prev.filter(c => c.id !== id));
+  }
+  async function agregarPropiedad(p) {
+    const nueva = await DB.addPropiedad(p);
+    if (nueva) setProps(prev => [nueva, ...prev]);
+  }
+  async function eliminarPropiedad(id) {
+    await DB.deletePropiedad(id);
+    setProps(prev => prev.filter(p => p.id !== id));
+  }
+
+  if (!dbReady) return (
+    <div style={{ height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#0a0a0a", flexDirection:"column", gap:16 }}>
+      <div style={{ fontFamily:"'Playfair Display',serif", fontSize:28, color:"#C9A84C" }}>Inmobiliaria</div>
+      <div style={{ fontSize:13, color:"#555" }}>Conectando con la base de datos...</div>
+    </div>
+  );
+
+  const render = () => {
+    switch(mod) {
+      case "dashboard":   return <Dashboard clientes={clientes} propiedades={props}/>;
+      case "clientes":    return <Clientes clientes={clientes} agregarCliente={agregarCliente} actualizarCliente={actualizarCliente} eliminarCliente={eliminarCliente}/>;
+      case "propiedades": return <Propiedades propiedades={props} agregarPropiedad={agregarPropiedad} eliminarPropiedad={eliminarPropiedad}/>;
+      case "whatsapp":    return <WhatsApp clientes={clientes}/>;
+      case "fotos":       return <FotosIA propiedades={props}/>;
+      case "anuncios":    return <Anuncios propiedades={props}/>;
+      case "tokko":       return <TokkoImport agregarCliente={agregarCliente}/>;
+      case "sistema":     return <MiSistema/>;
+      default: return null;
+    }
+  };
+
+  const isMobile = window.innerWidth < 768;
+
+  return (
+    <div style={{ display:"flex", height:"100vh", background:"#0a0a0a", overflow:"hidden" }}>
+
+      {/* Overlay mobile */}
+      {isMobile && sideOpen && <div onClick={()=>setSideOpen(false)} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:40 }}/>}
+
+      {/* SIDEBAR */}
+      <div style={{ width:210, background:"#0f0f0f", borderRight:"1px solid #1e1e1e", display:"flex", flexDirection:"column", padding:"20px 0", flexShrink:0, position:isMobile?"fixed":"relative", left:isMobile?(sideOpen?0:"-210px"):"auto", top:0, bottom:0, zIndex:50, transition:"left 0.3s" }}>
+        <div style={{ padding:"0 18px 20px", borderBottom:"1px solid #1e1e1e" }}>
+          <p style={{ fontSize:10, color:"#C9A84C", letterSpacing:3, textTransform:"uppercase" }}>Proyecto</p>
+          <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:19, fontWeight:700, marginTop:2 }}>Inmo<span style={{ color:"#C9A84C" }}>biliaria</span></h1>
+          <p style={{ fontSize:10, color:"#555", marginTop:3 }}>Datos guardados en este dispositivo</p>
+        </div>
+        <nav style={{ flex:1, padding:"12px 8px" }}>
+          {MODULES.map(m=>(
+            <button key={m.id} onClick={()=>{ setMod(m.id); if(isMobile) setSideOpen(false); }} style={{ width:"100%", display:"flex", alignItems:"center", gap:9, padding:"9px 11px", borderRadius:8, border:"none", cursor:"pointer", background:mod===m.id?"rgba(201,168,76,0.12)":"transparent", color:mod===m.id?"#C9A84C":"#666", fontSize:13, fontFamily:"inherit", fontWeight:mod===m.id?600:400, marginBottom:1, textAlign:"left", borderLeft:mod===m.id?"2px solid #C9A84C":"2px solid transparent", transition:"all 0.15s" }}>
+              <span style={{ fontSize:14 }}>{m.icon}</span>{m.label}
+            </button>
+          ))}
+        </nav>
+        <div style={{ padding:"14px 18px", borderTop:"1px solid #1e1e1e" }}>
+          <p style={{ fontSize:10, color:"#555", marginBottom:3 }}>Meta mensual</p>
+          <p style={{ fontFamily:"'Playfair Display',serif", fontSize:20, color:"#C9A84C", fontWeight:700 }}>$5.000 USD</p>
+        </div>
+      </div>
+
+      {/* CONTENIDO */}
+      <div style={{ flex:1, overflowY:"auto", position:"relative" }}>
+        {/* Header mobile */}
+        {isMobile && (
+          <div style={{ position:"sticky", top:0, background:"#0a0a0a", borderBottom:"1px solid #1e1e1e", padding:"12px 16px", display:"flex", alignItems:"center", gap:12, zIndex:30 }}>
+            <button onClick={()=>setSideOpen(true)} style={{ background:"none", border:"none", color:"#C9A84C", fontSize:20, cursor:"pointer", padding:4 }}>☰</button>
+            <p style={{ fontFamily:"'Playfair Display',serif", fontSize:16, fontWeight:700 }}>Inmo<span style={{ color:"#C9A84C" }}>biliaria</span></p>
+          </div>
+        )}
+        <div style={{ maxWidth:900, margin:"0 auto", padding:"28px 24px 40px" }}>
+          {render()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
