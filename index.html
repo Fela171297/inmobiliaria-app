@@ -22,6 +22,61 @@ select option { background:#1a1a1a; color:#f5f0e8; }
 <script type="text/babel">
 const { useState, useRef, useEffect } = React;
 
+// ── USUARIOS ──────────────────────────────────────────────────
+const USERS = {
+  "felipe@inmobiliaria": { pass: "Master2024!", role: "master", nombre: "Felipe" },
+  "demo@inmobiliaria":   { pass: "Demo2024!",  role: "demo",   nombre: "Demo" },
+};
+
+// ── LOGIN ─────────────────────────────────────────────────────
+function Login({ onLogin }) {
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  function handleLogin() {
+    setLoading(true); setError("");
+    setTimeout(() => {
+      const u = USERS[user.toLowerCase().trim()];
+      if (u && u.pass === pass) {
+        LS.set("session", { user: user.toLowerCase().trim(), nombre: u.nombre, role: u.role });
+        onLogin({ user: user.toLowerCase().trim(), nombre: u.nombre, role: u.role });
+      } else {
+        setError("Usuario o contraseña incorrectos.");
+      }
+      setLoading(false);
+    }, 600);
+  }
+
+  return (
+    <div style={{ height:"100vh", background:"#0a0a0a", display:"flex", alignItems:"center", justifyContent:"center", position:"relative", overflow:"hidden" }}>
+      <div style={{ position:"absolute", width:500, height:500, borderRadius:"50%", background:"radial-gradient(circle,rgba(201,168,76,0.07) 0%,transparent 70%)", top:"50%", left:"50%", transform:"translate(-50%,-50%)" }}/>
+      <div style={{ background:"#141414", border:"1px solid #2a2a2a", borderRadius:20, padding:"40px 36px", width:"100%", maxWidth:400, position:"relative" }}>
+        <div style={{ textAlign:"center", marginBottom:32 }}>
+          <p style={{ fontSize:11, color:"#C9A84C", letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>Bienvenido</p>
+          <h1 style={{ fontFamily:"'Playfair Display',serif", fontSize:32, fontWeight:700 }}>Inmo<span style={{ color:"#C9A84C" }}>biliaria</span></h1>
+          <p style={{ fontSize:13, color:"#555", marginTop:6 }}>Sistema de gestión con IA</p>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          <div>
+            <p style={{ fontSize:11, color:"#666", marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>Usuario</p>
+            <input value={user} onChange={e=>setUser(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="usuario@inmobiliaria" style={{ ...S.inp, fontSize:14 }}/>
+          </div>
+          <div>
+            <p style={{ fontSize:11, color:"#666", marginBottom:6, textTransform:"uppercase", letterSpacing:1 }}>Contraseña</p>
+            <input type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••" style={{ ...S.inp, fontSize:14 }}/>
+          </div>
+          {error && <p style={{ fontSize:12, color:"#e74c3c", textAlign:"center" }}>{error}</p>}
+          <button onClick={handleLogin} disabled={loading||!user||!pass} style={{ ...S.gbtn(loading||!user||!pass), marginTop:8, padding:"13px", fontSize:14 }}>
+            {loading ? "Ingresando..." : "Ingresar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── SUPABASE ──────────────────────────────────────────────────
 const SUPA_URL = "https://psyvkahajunbmsgodvss.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBzeXZrYWhhanVuYm1zZ29kdnNzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3NDA1ODUsImV4cCI6MjA5NTMxNjU4NX0.1JHEw5hplGP5G7uzryWC4pfrAayLpG67QN1u1TlfLPI";
@@ -212,18 +267,57 @@ function Dashboard({ clientes, propiedades }) {
 function Clientes({ clientes, agregarCliente, actualizarCliente, eliminarCliente }) {
   const [sel, setSel] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nombre:"", operacion:"Alquiler", presupuesto:"", urgencia:"Media", etapa:"Nuevo Lead", notas:"" });
+  const [form, setForm] = useState({ nombre:"", telefono:"", caracteristica:"", valor_propiedad:"", moneda:"USD", como_llego:"Tokko Broker", primer_contacto:"", operacion:"Alquiler", urgencia:"Media", etapa:"Nuevo Lead", notas:"" });
   const [tab, setTab] = useState("info");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [analisisInicial, setAnalisisInicial] = useState("");
   const f = (k,v) => setForm(p=>({...p,[k]:v}));
 
-  const sysCliente = c => `Sos asistente inmobiliario experto. Cliente: ${c.nombre}, ${c.operacion}, ${c.presupuesto}, Urgencia: ${c.urgencia}, Etapa: ${c.etapa}. Notas: ${c.notas}. Ayudá al agente a buscar propiedades, negociar y fidelizar. Respondé en español.`;
+  const sysCliente = c => `Sos asistente inmobiliario experto. Trabajás con el agente Felipe, agente inmobiliario argentino con meta de $5000 USD/mes.
+Cliente: ${c.nombre}
+Teléfono: ${c.caracteristica ? `(${c.caracteristica}) ${c.telefono}` : c.telefono}
+Operación: ${c.operacion}
+Propiedad de interés: ${c.valor_propiedad ? `${c.moneda} ${c.valor_propiedad}` : "no especificado"}
+Urgencia: ${c.urgencia}
+Etapa: ${c.etapa}
+Temperatura: ${c.temperatura||"Sin calificar"}
+Cómo llegó: ${c.como_llego}
+Primer contacto: ${c.primer_contacto}
+Notas: ${c.notas}
+Ayudá al agente a: buscar propiedades que matcheen, negociar, fidelizar y cerrar. Si el agente menciona el presupuesto del cliente, usalo para el análisis. Respondé en español, directo y práctico.`;
 
-  function agregar() {
+  async function agregar() {
     if (!form.nombre.trim()) return;
-    agregarCliente({ nombre:form.nombre, operacion:form.operacion, presupuesto:form.presupuesto, urgencia:form.urgencia, etapa:form.etapa, notas:form.notas, temperatura:"Sin calificar" });
-    setForm({ nombre:"", operacion:"Alquiler", presupuesto:"", urgencia:"Media", etapa:"Nuevo Lead", notas:"" });
+    setAiLoading(true);
+    // Análisis inicial con IA
+    const analisis = await ai(
+      "Sos experto en CRM inmobiliario argentino. Analizás leads y respondés SOLO en JSON válido sin backticks.",
+      `Analizá este nuevo lead y respondé SOLO este JSON: {"temperatura":"CALIENTE","accion_inmediata":"acción concreta en 1 oración","mensaje_whatsapp":"mensaje de primer contacto humanizado y natural","observacion":"insight clave sobre este lead en 1 oración"}
+Datos: Nombre:${form.nombre}, Operación:${form.operacion}, Propiedad:${form.valor_propiedad} ${form.moneda}, Cómo llegó:${form.como_llego}, Primer contacto:"${form.primer_contacto}", Urgencia:${form.urgencia}`
+    );
+    let parsed = { temperatura:"Sin calificar", accion_inmediata:"", mensaje_whatsapp:"", observacion:"" };
+    try { parsed = JSON.parse(analisis.replace(/```json|```/g,"").trim()); } catch {}
+
+    await agregarCliente({
+      nombre: form.nombre,
+      telefono: form.telefono,
+      caracteristica: form.caracteristica,
+      valor_propiedad: form.valor_propiedad,
+      moneda: form.moneda,
+      como_llego: form.como_llego,
+      primer_contacto: form.primer_contacto,
+      operacion: form.operacion,
+      urgencia: form.urgencia,
+      etapa: "Nuevo Lead",
+      temperatura: parsed.temperatura,
+      notas: parsed.observacion || "",
+      mensaje_sugerido: parsed.mensaje_whatsapp || "",
+    });
+    setAiLoading(false);
+    setForm({ nombre:"", telefono:"", caracteristica:"", valor_propiedad:"", moneda:"USD", como_llego:"Tokko Broker", primer_contacto:"", operacion:"Alquiler", urgencia:"Media", etapa:"Nuevo Lead", notas:"" });
     setShowForm(false);
   }
+
   function moverEtapa(id, etapa) {
     actualizarCliente(id, { etapa });
     if (sel?.id===id) setSel(p=>({...p,etapa}));
@@ -250,7 +344,7 @@ function Clientes({ clientes, agregarCliente, actualizarCliente, eliminarCliente
       {tab==="info" && (
         <div style={S.card}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
-            {[["Operación",sel.operacion],["Presupuesto",sel.presupuesto||"—"],["Urgencia",sel.urgencia],["Etapa",sel.etapa]].map(([l,v])=>(
+            {[["Operación",sel.operacion],["Propiedad consultada",sel.valor_propiedad?`${sel.moneda} ${sel.valor_propiedad}`:"—"],["Urgencia",sel.urgencia],["Etapa",sel.etapa],["Temperatura",sel.temperatura||"Sin calificar"],["Cómo llegó",sel.como_llego||"—"],["Teléfono",sel.caracteristica?`(${sel.caracteristica}) ${sel.telefono}`:sel.telefono||"—"]].map(([l,v])=>(
               <div key={l}><p style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:3 }}>{l}</p><p style={{ fontSize:14, fontWeight:600 }}>{v}</p></div>
             ))}
           </div>
@@ -279,14 +373,50 @@ function Clientes({ clientes, agregarCliente, actualizarCliente, eliminarCliente
       {showForm && (
         <div style={S.card}>
           <p style={{ fontSize:13, fontWeight:600, marginBottom:12, color:"#C9A84C" }}>Nuevo cliente</p>
+          {/* Fila 1: Nombre y Teléfono */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
             <input value={form.nombre} onChange={e=>f("nombre",e.target.value)} placeholder="Nombre completo" style={S.inp}/>
-            <input value={form.presupuesto} onChange={e=>f("presupuesto",e.target.value)} placeholder="Presupuesto (USD 80.000)" style={S.inp}/>
-            <select value={form.operacion} onChange={e=>f("operacion",e.target.value)} style={S.sel}><option>Alquiler</option><option>Compra</option><option>Venta</option></select>
-            <select value={form.urgencia} onChange={e=>f("urgencia",e.target.value)} style={S.sel}><option value="Alta">Urgencia Alta</option><option value="Media">Urgencia Media</option><option value="Baja">Urgencia Baja</option></select>
+            <div style={{ display:"flex", gap:6 }}>
+              <input value={form.caracteristica} onChange={e=>f("caracteristica",e.target.value)} placeholder="Cód. área" style={{ ...S.inp, width:90, flexShrink:0 }}/>
+              <input value={form.telefono} onChange={e=>f("telefono",e.target.value)} placeholder="Teléfono" style={{ ...S.inp, flex:1 }}/>
+            </div>
           </div>
-          <textarea value={form.notas} onChange={e=>f("notas",e.target.value)} placeholder="Qué busca, zona, características..." rows={3} style={{ ...S.inp, resize:"vertical", marginBottom:10 }}/>
-          <button onClick={agregar} style={S.gbtn(false)}>Guardar</button>
+          {/* Fila 2: Valor propiedad y moneda */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:10, marginBottom:10 }}>
+            <input value={form.valor_propiedad} onChange={e=>f("valor_propiedad",e.target.value)} placeholder="Valor de la propiedad consultada" style={S.inp}/>
+            <select value={form.moneda} onChange={e=>f("moneda",e.target.value)} style={{ ...S.sel, width:80 }}>
+              <option value="USD">USD</option>
+              <option value="ARS">$</option>
+            </select>
+          </div>
+          {/* Fila 3: Operación y Urgencia */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+            <select value={form.operacion} onChange={e=>f("operacion",e.target.value)} style={S.sel}>
+              <option>Alquiler</option><option>Compra</option><option>Venta</option>
+            </select>
+            <select value={form.urgencia} onChange={e=>f("urgencia",e.target.value)} style={S.sel}>
+              <option value="Alta">Urgencia Alta</option>
+              <option value="Media">Urgencia Media</option>
+              <option value="Baja">Urgencia Baja</option>
+            </select>
+          </div>
+          {/* Fila 4: Cómo llegó */}
+          <div style={{ marginBottom:10 }}>
+            <p style={{ fontSize:11, color:"#666", marginBottom:6 }}>¿Cómo llegó la consulta?</p>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {["Tokko Broker","Instagram","Facebook","Referido","Llamado directo","Zonaprop","Argenprop","Otro"].map(o=>(
+                <button key={o} onClick={()=>f("como_llego",o)} style={{ padding:"6px 12px", borderRadius:20, border:`1px solid ${form.como_llego===o?"#C9A84C44":"#2a2a2a"}`, background:form.como_llego===o?"rgba(201,168,76,0.15)":"transparent", color:form.como_llego===o?"#C9A84C":"#666", fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>{o}</button>
+              ))}
+            </div>
+          </div>
+          {/* Fila 5: Primer contacto */}
+          <div style={{ marginBottom:10 }}>
+            <p style={{ fontSize:11, color:"#666", marginBottom:6 }}>¿Qué dijo en el primer contacto? ¿Qué le interesó?</p>
+            <textarea value={form.primer_contacto} onChange={e=>f("primer_contacto",e.target.value)} placeholder='Ej: "Consultó por el depto de Palermo, le interesa la terraza, busca para agosto..."' rows={3} style={{ ...S.inp, resize:"vertical" }}/>
+          </div>
+          <button onClick={agregar} disabled={aiLoading||!form.nombre.trim()} style={S.gbtn(aiLoading||!form.nombre.trim())}>
+            {aiLoading ? "⏳ Analizando con IA..." : "Guardar y analizar con IA"}
+          </button>
         </div>
       )}
       {clientes.length===0
@@ -864,6 +994,7 @@ function MiSistema() {
 
 // ── APP PRINCIPAL ─────────────────────────────────────────────
 function App() {
+  const [session, setSession] = useState(() => LS.get("session", null));
   const [mod, setMod] = useState("dashboard");
   const [sideOpen, setSideOpen] = useState(false);
   const [clientes, setClientes] = useState([]);
@@ -900,6 +1031,8 @@ function App() {
     await DB.deletePropiedad(id);
     setProps(prev => prev.filter(p => p.id !== id));
   }
+
+  if (!session) return <Login onLogin={setSession}/>;
 
   if (!dbReady) return (
     <div style={{ height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"#0a0a0a", flexDirection:"column", gap:16 }}>
@@ -947,6 +1080,10 @@ function App() {
         <div style={{ padding:"14px 18px", borderTop:"1px solid #1e1e1e" }}>
           <p style={{ fontSize:10, color:"#555", marginBottom:3 }}>Meta mensual</p>
           <p style={{ fontFamily:"'Playfair Display',serif", fontSize:20, color:"#C9A84C", fontWeight:700 }}>$5.000 USD</p>
+          <div style={{ marginTop:12, paddingTop:12, borderTop:"1px solid #1e1e1e" }}>
+            <p style={{ fontSize:11, color:"#888", marginBottom:6 }}>👤 {session.nombre}</p>
+            <button onClick={()=>{ LS.set("session",null); setSession(null); }} style={{ ...S.sbtn, fontSize:11, width:"100%", textAlign:"center", color:"#e74c3c", borderColor:"#e74c3c33" }}>Cerrar sesión</button>
+          </div>
         </div>
       </div>
 
