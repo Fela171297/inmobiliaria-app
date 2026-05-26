@@ -289,14 +289,19 @@ Ayudá al agente a: buscar propiedades que matcheen, negociar, fidelizar y cerra
   async function agregar() {
     if (!form.nombre.trim()) return;
     setAiLoading(true);
-    // Análisis inicial con IA
-    const analisis = await ai(
-      "Sos experto en CRM inmobiliario argentino. Analizás leads y respondés SOLO en JSON válido sin backticks.",
-      `Analizá este nuevo lead y respondé SOLO este JSON: {"temperatura":"CALIENTE","accion_inmediata":"acción concreta en 1 oración","mensaje_whatsapp":"mensaje de primer contacto humanizado y natural","observacion":"insight clave sobre este lead en 1 oración"}
-Datos: Nombre:${form.nombre}, Operación:${form.operacion}, Propiedad:${form.valor_propiedad} ${form.moneda}, Cómo llegó:${form.como_llego}, Primer contacto:"${form.primer_contacto}", Urgencia:${form.urgencia}`
-    );
     let parsed = { temperatura:"Sin calificar", accion_inmediata:"", mensaje_whatsapp:"", observacion:"" };
-    try { parsed = JSON.parse(analisis.replace(/```json|```/g,"").trim()); } catch {}
+    try {
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 15000));
+      const analisis = await Promise.race([
+        ai(
+          "Sos experto en CRM inmobiliario argentino. Analizás leads y respondés SOLO en JSON válido sin backticks.",
+          `Analizá este nuevo lead y respondé SOLO este JSON: {"temperatura":"CALIENTE","accion_inmediata":"acción concreta en 1 oración","mensaje_whatsapp":"mensaje de primer contacto humanizado y natural","observacion":"insight clave sobre este lead en 1 oración"}
+Datos: Nombre:${form.nombre}, Operación:${form.operacion}, Propiedad:${form.valor_propiedad} ${form.moneda}, Cómo llegó:${form.como_llego}, Primer contacto:"${form.primer_contacto}", Urgencia:${form.urgencia}`
+        ),
+        timeout
+      ]);
+      try { parsed = JSON.parse(analisis.replace(/```json|```/g,"").trim()); } catch {}
+    } catch {}
 
     await agregarCliente({
       nombre: form.nombre,
